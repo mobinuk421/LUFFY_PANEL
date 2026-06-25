@@ -1216,6 +1216,7 @@ async def list_links(_=Depends(require_auth)):
             "group_name": group_names.get(gid) if gid else None,
             "group_limit_bytes": group_limits.get(gid, 0) if gid else 0,
             "group_used_bytes": group_usage_cache.get(gid, 0) if gid else 0,
+            "auto_suspended": data.get("auto_suspended", False),
         })
     result.sort(key=lambda x: x["created_at"], reverse=True)
     return {"links": result}
@@ -1234,6 +1235,8 @@ async def toggle_link(uid: str, request: Request, _=Depends(require_auth)):
             raise HTTPException(status_code=404, detail="link not found")
         if "active" in body:
             LINKS[uid]["active"] = bool(body["active"])
+            if bool(body["active"]):  # وقتی دوباره فعال میشه
+                LINKS[uid]["auto_suspended"] = False
         if "limit_value" in body:
             limit_value = float(body.get("limit_value") or 0)
             limit_unit = body.get("limit_unit") or "GB"
@@ -1241,6 +1244,7 @@ async def toggle_link(uid: str, request: Request, _=Depends(require_auth)):
         if "reset_usage" in body and body["reset_usage"]:
             LINKS[uid]["used_bytes"] = 0
             LINKS[uid]["notified_quota"] = False
+            LINKS[uid]["auto_suspended"] = False
         if "label" in body:
             LINKS[uid]["label"] = str(body["label"])[:60]
         if "max_connections" in body:
@@ -1352,6 +1356,30 @@ async def delete_domain(index: int, _=Depends(require_auth)):
             raise HTTPException(status_code=404, detail="Domain not found")
     await db_delete_domain(removed)
     return {"ok": True, "domains": list(CUSTOM_DOMAINS)}
+
+@app.get("/api/analytics")
+async def get_analytics(_=Depends(require_auth)):
+    """آمار پیشرفته مصرف هر یوزر برای نمودار"""
+    async with LINKS_LOCK:
+        items = list(LINKS.items())
+    result = []
+    for uid, link in items:
+        used = link.get("used_bytes", 0)
+        limit = link.get("limit_bytes", 0)
+        pct = round(used / limit * 100, 1) if limit > 0 else 0
+        result.append({
+            "uid": uid,
+            "label": link.get("label", uid[:8]),
+            "used_bytes": used,
+            "limit_bytes": limit,
+            "pct": pct,
+            "active": link.get("active", True),
+            "auto_suspended": link.get("auto_suspended", False),
+            "expires_at": link.get("expires_at"),
+            "group_id": link.get("group_id"),
+        })
+    result.sort(key=lambda x: x["used_bytes"], reverse=True)
+    return {"users": result, "total": len(result)}
 
 @app.get("/api/backup")
 async def export_backup(_=Depends(require_auth)):
@@ -1848,10 +1876,29 @@ async def check_quota(uid: str, extra_bytes: int) -> bool:
 
 async def add_usage(uid: str, n: int):
     group_to_check: str | None = None
+    suspend_user = False
+    link_copy: dict = {}
     async with LINKS_LOCK:
         if uid in LINKS:
             LINKS[uid]["used_bytes"] += n
             group_to_check = LINKS[uid].get("group_id")
+            lnk = LINKS[uid]
+            if (lnk["limit_bytes"] > 0
+                    and lnk["used_bytes"] >= lnk["limit_bytes"]
+                    and lnk["active"]
+                    and not lnk.get("auto_suspended")):
+                lnk["active"] = False
+                lnk["auto_suspended"] = True
+                suspend_user = True
+                link_copy = dict(lnk)
+    if suspend_user:
+        await db_save_link(uid, link_copy)
+        await close_connections_for_link(uid)
+        await telegram_notify(
+            f"🚫 <b>{link_copy['label']}</b> auto-suspended — data quota reached "
+            f"({_fmt_bytes(link_copy['used_bytes'])} / {_fmt_bytes(link_copy['limit_bytes'])})."
+        )
+        return
     if not group_to_check:
         return
     async with GROUPS_LOCK:
@@ -2133,6 +2180,9 @@ body{font-family:'Inter',sans-serif;color:var(--text);display:flex;flex-directio
 .page{display:none;animation:pgIn .4s ease}
 .page.active{display:block}
 @keyframes pgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes themeFlash{0%{opacity:0}40%{opacity:1}100%{opacity:0}}
+@keyframes suspendPulse{0%,100%{opacity:1}50%{opacity:.5}}
+.auto-suspended-row{animation:suspendPulse 2s ease infinite}
 .page-header{margin-bottom:36px}
 .page-eyebrow{font-size:10.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.14em;margin-bottom:10px}
 .page-header-row{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:14px}
@@ -2341,6 +2391,10 @@ body{font-family:'Inter',sans-serif;color:var(--text);display:flex;flex-directio
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
         <span class="nav-label">Domains</span>
       </button>
+      <button class="nav-item" data-page="analytics">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><rect x="1" y="1" width="22" height="22" rx="2" ry="2" opacity="0"/></svg>
+        <span class="nav-label">Analytics</span>
+      </button>
       <button class="nav-item" data-page="security">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
         <span class="nav-label">Security</span>
@@ -2508,6 +2562,52 @@ body{font-family:'Inter',sans-serif;color:var(--text);display:flex;flex-directio
     </section>
 
     <!-- Security -->
+    <!-- Analytics -->
+    <section class="page" id="page-analytics">
+      <div class="page-header">
+        <div class="page-eyebrow">Usage Stats</div>
+        <div class="page-header-row">
+          <div>
+            <div class="page-title">Analytics</div>
+            <div class="page-sub">Per-user data consumption & status</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="loadAnalytics()">↻ Refresh</button>
+        </div>
+        <div class="page-rule"></div>
+      </div>
+      <!-- Summary cards -->
+      <div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+        <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-val" id="an-total">–</div></div>
+        <div class="stat-card"><div class="stat-label">Active</div><div class="stat-val" id="an-active" style="color:var(--green)">–</div></div>
+        <div class="stat-card"><div class="stat-label">Suspended</div><div class="stat-val" id="an-suspended" style="color:var(--red)">–</div></div>
+      </div>
+      <!-- Bar chart canvas -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd">
+          <div class="card-title">Data Usage per User</div>
+          <select id="an-sort" class="fs" style="font-size:11px;padding:4px 8px;width:auto" onchange="renderAnalyticsChart()">
+            <option value="used">Sort: Most Used</option>
+            <option value="pct">Sort: % Used</option>
+            <option value="label">Sort: Name</option>
+          </select>
+        </div>
+        <div style="height:280px"><canvas id="an-chart"></canvas></div>
+      </div>
+      <!-- Table -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px">User Detail</div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr>
+              <th>User</th><th>Used</th><th>Limit</th><th>%</th><th>Status</th>
+            </tr></thead>
+            <tbody id="an-tbody"></tbody>
+          </table>
+        </div>
+        <div class="m-cards" id="an-mcards"></div>
+      </div>
+    </section>
+
     <section class="page" id="page-security">
       <div class="page-header">
         <div class="page-eyebrow">Access</div>
@@ -2662,17 +2762,39 @@ let isAuthenticated=false;
 // ── Theme ────────────────────────────────────────────────────────────────────
 function setTheme(t){
   theme=t;
+  // انیمیشن transition روان
+  document.documentElement.style.setProperty('--theme-transition','all 0.35s cubic-bezier(.4,0,.2,1)');
+  document.body.style.transition='background 0.35s ease, color 0.35s ease';
   if(t==='light')document.body.classList.add('light-mode');
   else document.body.classList.remove('light-mode');
   localStorage.setItem('theme',t);
   const icon=t==='light'?'☀️':'🌙';
+  const label=t==='light'?'Light':'Dark';
   const mb=$m('theme-btn-mob');
   const db=$m('theme-btn-desk');
   if(mb)mb.innerHTML=icon;
-  if(db)db.innerHTML=icon+' Theme';
+  if(db)db.innerHTML=`${icon} ${label}`;
+  // آپدیت chart colors
   updChartColors();
+  if(anChart){
+    const isDark=t==='dark';
+    const tc=isDark?'rgba(255,255,255,0.4)':'rgba(0,0,0,0.4)';
+    const gc=isDark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)';
+    anChart.options.scales.x.ticks.color=tc;
+    anChart.options.scales.y.ticks.color=tc;
+    anChart.options.scales.x.grid.color=gc;
+    anChart.options.scales.y.grid.color=gc;
+    anChart.update();
+  }
 }
-function toggleTheme(){setTheme(theme==='dark'?'light':'dark');}
+function toggleTheme(){
+  // flash animation
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(255,255,255,0.04);z-index:9999;pointer-events:none;animation:themeFlash 0.3s ease forwards';
+  document.body.appendChild(overlay);
+  setTimeout(()=>overlay.remove(),350);
+  setTheme(theme==='dark'?'light':'dark');
+}
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth(){
@@ -2738,6 +2860,9 @@ function switchPage(id){
   const target=$m('page-'+id);
   if(target)target.classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===id));
+  if(id==='analytics')loadAnalytics();
+  if(id==='addresses')loadAddrs();
+  if(id==='domains')loadDomains();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -2830,7 +2955,7 @@ function renderLinks(links){
     <td><div class="pill"><span class="pill-used">${fmtB(r.u)}</span><div class="pill-bar"><div class="pill-fill" style="width:${r.pct}%;background:${r.col}"></div></div><span class="pill-lim">${fmtLim(r.lim)}</span></div></td>
     <td style="font-size:11px;font-weight:600;color:${r.mc2>0&&r.cc>=r.mc2?'var(--red)':'var(--text2)'}">${r.cc}/${r.mc2||'∞'}</td>
     <td style="font-size:10.5px;font-weight:700;color:${r.ec}">${r.ex}</td>
-    <td><span class="tag ${r.l.active?'tag-on':'tag-off'}">${r.l.active?'On':'Off'}</span></td>
+    <td><span class="tag ${r.l.auto_suspended?'tag-off':r.l.active?'tag-on':'tag-off'}">${r.l.auto_suspended?'⏸ Quota':r.l.active?'On':'Off'}</span></td>
     <td><div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap">
       <button class="toggle ${r.l.active?'on':''}" data-uid="${r.l.uuid}" onclick="togLink(this)"></button>
       <button class="act-btn act-edit" onclick="showEditMo('${r.l.uuid}')">${editText}</button>
@@ -3465,13 +3590,149 @@ async function delDomain(i){
   }catch(e){toast('Error deleting',true);}
 }
 
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+let analyticsData = [];
+let anChart = null;
+
+async function loadAnalytics() {
+  try {
+    const r = await fetch('/api/analytics');
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    analyticsData = d.users || [];
+    const active = analyticsData.filter(u => u.active).length;
+    const suspended = analyticsData.filter(u => u.auto_suspended).length;
+    $m('an-total').textContent = analyticsData.length;
+    $m('an-active').textContent = active;
+    $m('an-suspended').textContent = suspended;
+    renderAnalyticsChart();
+    renderAnalyticsTable();
+  } catch(e) { /* silent */ }
+}
+
+function renderAnalyticsChart() {
+  const sortBy = $m('an-sort').value;
+  let data = [...analyticsData];
+  if (sortBy === 'used') data.sort((a,b) => b.used_bytes - a.used_bytes);
+  else if (sortBy === 'pct') data.sort((a,b) => b.pct - a.pct);
+  else data.sort((a,b) => a.label.localeCompare(b.label));
+  data = data.slice(0, 20); // max 20 user
+  const labels = data.map(u => u.label);
+  const usedGB = data.map(u => +(u.used_bytes / 1073741824).toFixed(2));
+  const limitGB = data.map(u => u.limit_bytes > 0 ? +(u.limit_bytes / 1073741824).toFixed(2) : null);
+  const colors = data.map(u =>
+    u.auto_suspended ? 'rgba(255,107,107,0.8)' :
+    u.pct >= 90 ? 'rgba(251,191,36,0.85)' :
+    'rgba(34,211,165,0.8)'
+  );
+  if (anChart) anChart.destroy();
+  const ctx = document.getElementById('an-chart').getContext('2d');
+  anChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Used (GB)',
+          data: usedGB,
+          backgroundColor: colors,
+          borderRadius: 6,
+          borderSkipped: false,
+        },
+        {
+          label: 'Limit (GB)',
+          data: limitGB,
+          backgroundColor: 'rgba(255,255,255,0.06)',
+          borderColor: 'rgba(255,255,255,0.15)',
+          borderWidth: 1,
+          borderRadius: 6,
+          borderSkipped: false,
+          type: 'bar',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: 'rgba(255,255,255,0.5)', font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const u = data[ctx.dataIndex];
+              if (ctx.datasetIndex === 0)
+                return ` Used: ${ctx.parsed.y} GB (${u.pct}%)`;
+              return ctx.parsed.y ? ` Limit: ${ctx.parsed.y} GB` : ' No limit';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } }
+      }
+    }
+  });
+}
+
+function renderAnalyticsTable() {
+  const tbody = $m('an-tbody');
+  const mcards = $m('an-mcards');
+  if (!tbody) return;
+  const rows = analyticsData.map(u => {
+    const statusColor = u.auto_suspended ? 'var(--red)' : u.active ? 'var(--green)' : 'var(--text3)';
+    const statusTxt = u.auto_suspended ? '⏸ Suspended' : u.active ? '✓ Active' : '✗ Disabled';
+    const bar = u.limit_bytes > 0
+      ? `<div style="background:rgba(255,255,255,0.06);border-radius:4px;height:5px;margin-top:4px;width:120px"><div style="height:5px;border-radius:4px;width:${Math.min(u.pct,100)}%;background:${u.pct>=90?'var(--red)':'var(--green)'}"></div></div>`
+      : '';
+    return `<tr>
+      <td style="font-weight:600">${esc(u.label)}</td>
+      <td style="font-family:monospace">${_fmtBytes(u.used_bytes)}</td>
+      <td style="font-family:monospace">${u.limit_bytes>0?_fmtBytes(u.limit_bytes):'∞'}</td>
+      <td>${u.limit_bytes>0?`${u.pct}%${bar}`:'–'}</td>
+      <td style="color:${statusColor};font-weight:700;font-size:11px">${statusTxt}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:24px">No users</td></tr>';
+
+  // mobile cards
+  mcards.innerHTML = analyticsData.map(u => {
+    const statusColor = u.auto_suspended ? 'var(--red)' : u.active ? 'var(--green)' : 'var(--text3)';
+    const statusTxt = u.auto_suspended ? '⏸ Suspended' : u.active ? '✓ Active' : '✗ Disabled';
+    const pctBar = u.limit_bytes > 0
+      ? `<div style="background:rgba(255,255,255,0.06);border-radius:4px;height:6px;margin-top:6px"><div style="height:6px;border-radius:4px;width:${Math.min(u.pct,100)}%;background:${u.pct>=90?'var(--red)':'var(--green)'}"></div></div>`
+      : '';
+    return `<div class="m-card">
+      <div class="m-card-hd">
+        <span style="font-weight:700">${esc(u.label)}</span>
+        <span style="color:${statusColor};font-size:11px;font-weight:700">${statusTxt}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3)">
+        <span>Used: <b style="color:var(--text)">${_fmtBytes(u.used_bytes)}</b></span>
+        <span>Limit: <b style="color:var(--text)">${u.limit_bytes>0?_fmtBytes(u.limit_bytes):'∞'}</b></span>
+        ${u.limit_bytes>0?`<span><b style="color:var(--text)">${u.pct}%</b></span>`:''}
+      </div>
+      ${pctBar}
+    </div>`;
+  }).join('') || '';
+}
+
+function _fmtBytes(b) {
+  if (!b) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length-1) { b /= 1024; i++; }
+  return b.toFixed(i>0?2:0)+' '+u[i];
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 setTheme(theme);
 checkAuth();
 let statsInterval=null;
 function startPolling(){
   if(statsInterval)clearInterval(statsInterval);
-  statsInterval=setInterval(()=>{if(isAuthenticated){loadStats();loadLinks();loadGroups();loadDomains();}},12000);
+  statsInterval=setInterval(()=>{if(isAuthenticated){loadStats();loadLinks();loadGroups();loadDomains();if(document.getElementById('page-analytics').classList.contains('active'))loadAnalytics();}},15000);
 }
 startPolling();
 </script>
