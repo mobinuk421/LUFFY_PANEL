@@ -2292,7 +2292,8 @@ body::after{
 .stat-label{font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.12em;margin-bottom:12px}
 .stat-val{font-size:28px;font-weight:700;color:var(--text);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .stat-unit{font-size:11px;font-weight:500;color:var(--text3)}
-.stat-icon{position:absolute;right:16px;top:16px;opacity:.12;width:32px;height:32px;color:var(--cyan)}
+.stat-icon{position:absolute;right:14px;top:14px;opacity:.15;width:28px;height:28px;color:var(--cyan);transition:opacity .3s}
+.stat-card:hover .stat-icon{opacity:.28}
 
 .card{
   background:var(--glass);border:1px solid var(--border);
@@ -2663,64 +2664,121 @@ body::after{
   <!-- MAIN CONTENT -->
   <main class="main">
 
-    <!-- Dashboard -->
+    <!-- ══ Dashboard ══ -->
     <section class="page active" id="page-dashboard">
       <div class="page-header">
-        <div class="page-eyebrow">Overview</div>
+        <div class="page-eyebrow">
+          <span style="display:inline-flex;align-items:center;gap:6px">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);display:inline-block"></span>
+            System Online
+          </span>
+        </div>
         <div class="page-header-row">
           <div>
             <div class="page-title">Dashboard</div>
-            <div class="page-sub" id="last-up">–</div>
+            <div class="page-sub" id="last-up" style="font-family:var(--mono);font-size:11px">–</div>
           </div>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-ghost btn-sm" onclick="qCreate(.5,'GB')">+ 0.5 GB</button>
-            <button class="btn btn-gold btn-sm" onclick="qCreate(1,'GB')">+ 1 GB</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="qCreate(.5,'GB')">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              0.5 GB
+            </button>
+            <button class="btn btn-gold btn-sm" onclick="qCreate(1,'GB')">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              1 GB
+            </button>
           </div>
         </div>
         <div class="page-rule"></div>
       </div>
+
+      <!-- Stat Cards -->
       <div class="stats-row">
-        <div class="stat-card" style="animation-delay:.08s"><div class="stat-label">Traffic</div><div class="stat-val" id="sv-traffic">–<span class="stat-unit"> MB</span></div></div>
-        <div class="stat-card" style="animation-delay:.16s"><div class="stat-label">Inbounds</div><div class="stat-val" id="sv-links">–</div></div>
-        <div class="stat-card" style="animation-delay:.24s"><div class="stat-label">Uptime</div><div class="stat-val" id="sv-uptime" style="font-size:18px">–</div></div>
-        <div class="stat-card" style="animation-delay:.32s"><div class="stat-label">Domain</div><div class="stat-val" id="sv-domain" style="font-size:11px;word-break:break-all;font-weight:500;font-family:'JetBrains Mono',monospace">–</div></div>
+        <div class="stat-card" style="animation-delay:.05s">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <div class="stat-label">Traffic</div>
+          <div class="stat-val" id="sv-traffic">–<span class="stat-unit"> MB</span></div>
+        </div>
+        <div class="stat-card" style="animation-delay:.1s">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+          <div class="stat-label">Inbounds</div>
+          <div class="stat-val" id="sv-links">–</div>
+        </div>
+        <div class="stat-card" style="animation-delay:.15s">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <div class="stat-label">Uptime</div>
+          <div class="stat-val" id="sv-uptime" style="font-size:17px">–</div>
+        </div>
+        <div class="stat-card" style="animation-delay:.2s">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10"/></svg>
+          <div class="stat-label">Domain</div>
+          <div class="stat-val" id="sv-domain" style="font-size:10px;word-break:break-all;font-weight:600;font-family:var(--mono);color:var(--cyan)">–</div>
+        </div>
       </div>
+
+      <!-- CPU / Memory -->
       <div class="grid-2">
         <div class="card">
-          <div class="card-hd"><div class="card-title">CPU</div><span id="cpu-v" style="font-size:17px;font-weight:700;color:var(--text)">–%</span></div>
-          <div class="sys-bar"><div class="sys-fill" id="cpu-b" style="background:var(--text)"></div></div>
+          <div class="card-hd">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+              CPU
+            </div>
+            <span id="cpu-v" style="font-size:20px;font-weight:700;color:var(--cyan);font-family:var(--mono)">–%</span>
+          </div>
+          <div class="sys-bar"><div class="sys-fill" id="cpu-b" style="background:linear-gradient(90deg,var(--cyan),var(--cyan2))"></div></div>
         </div>
         <div class="card">
-          <div class="card-hd"><div class="card-title">Memory</div><span id="mem-v" style="font-size:17px;font-weight:700;color:var(--text)">–%</span></div>
-          <div class="sys-bar"><div class="sys-fill" id="mem-b" style="background:var(--text)"></div></div>
+          <div class="card-hd">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2z"/><path d="M12 8v4l3 3"/></svg>
+              Memory
+            </div>
+            <span id="mem-v" style="font-size:20px;font-weight:700;color:var(--purple);font-family:var(--mono)">–%</span>
+          </div>
+          <div class="sys-bar"><div class="sys-fill" id="mem-b" style="background:linear-gradient(90deg,var(--purple),#7c3aed)"></div></div>
         </div>
       </div>
+
+      <!-- Chart -->
       <div class="card">
-        <div class="card-hd"><div class="card-title">Hourly Traffic</div></div>
+        <div class="card-hd">
+          <div class="card-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Hourly Traffic
+          </div>
+          <span style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.04em">LIVE</span>
+        </div>
         <div class="chart-container"><canvas id="tc"></canvas></div>
       </div>
     </section>
 
-    <!-- Inbounds -->
+    <!-- ══ Inbounds ══ -->
     <section class="page" id="page-inbounds">
       <div class="page-header">
         <div class="page-eyebrow">Connections</div>
         <div class="page-header-row">
           <div>
             <div class="page-title">Inbounds</div>
-            <div class="page-sub">VLESS over WebSocket · TLS</div>
+            <div class="page-sub">VLESS · WebSocket · TLS</div>
           </div>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-ghost" onclick="showBulkMo()">⚡ Bulk Create</button>
-            <button class="btn btn-gold" onclick="showAddMo()">+ Add</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" onclick="showBulkMo()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              Bulk
+            </button>
+            <button class="btn btn-gold" onclick="showAddMo()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add
+            </button>
           </div>
         </div>
         <div class="page-rule"></div>
       </div>
       <div class="tb">
         <div class="search-wrap">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="srch" placeholder="Search name…" oninput="filterLinks()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="srch" placeholder="Search inbound…" oninput="filterLinks()">
         </div>
         <div class="filter-chips">
           <button class="chip active" data-filter="all" onclick="setFilter('all',this)">All</button>
@@ -2728,104 +2786,156 @@ body::after{
           <button class="chip" data-filter="off" onclick="setFilter('off',this)">Off</button>
         </div>
       </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div class="tbl-wrap">
+      <div class="card" style="padding:0;overflow:hidden;border-radius:var(--radius-lg)">
+        <div class="tbl-wrap" style="border:none">
           <table class="tbl">
             <thead><tr>
-              <th>#</th>
+              <th style="width:36px">#</th>
               <th>Name</th>
-              <th>Type</th>
+              <th>Protocol</th>
               <th>Usage</th>
               <th>IPs</th>
               <th>Expiry</th>
               <th>Status</th>
-              <th>Actions</th>
+              <th style="text-align:right">Actions</th>
             </tr></thead>
             <tbody id="ltb"></tbody>
           </table>
         </div>
-        <div class="m-cards" id="mcards"></div>
-        <div class="empty" id="lempty" style="display:none">No inbounds found</div>
+        <div class="m-cards" id="mcards" style="padding:14px"></div>
+        <div class="empty" id="lempty" style="display:none">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--text3);margin-bottom:10px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div>No inbounds found</div>
+        </div>
       </div>
     </section>
 
-
+    <!-- ══ Traffic ══ -->
     <section class="page" id="page-traffic">
       <div class="page-header">
-        <div class="page-eyebrow">Usage</div>
-        <div class="page-header-row"><div><div class="page-title">Traffic</div><div class="page-sub">Statistics</div></div></div>
+        <div class="page-eyebrow">Monitoring</div>
+        <div class="page-header-row"><div><div class="page-title">Traffic</div><div class="page-sub">Bandwidth & request statistics</div></div></div>
         <div class="page-rule"></div>
       </div>
-      <div class="card">
-        <div class="sl-item"><span class="sl-k">Total Traffic</span><span class="sl-v" id="t-tr">–</span></div>
-        <div class="sl-item"><span class="sl-k">Total Requests</span><span class="sl-v" id="t-rq">–</span></div>
-        <div class="sl-item"><span class="sl-k">Uptime</span><span class="sl-v" id="t-up">–</span></div>
+      <div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+        <div class="stat-card">
+          <div class="stat-label">Total Traffic</div>
+          <div class="stat-val" id="t-tr" style="font-size:22px">–</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Requests</div>
+          <div class="stat-val" id="t-rq" style="font-size:22px">–</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Uptime</div>
+          <div class="stat-val" id="t-up" style="font-size:18px">–</div>
+        </div>
       </div>
     </section>
 
-    <!-- Clean IP -->
+    <!-- ══ Clean IP ══ -->
     <section class="page" id="page-addresses">
       <div class="page-header">
         <div class="page-eyebrow">Routing</div>
         <div class="page-header-row">
-          <div><div class="page-title">Clean IP</div><div class="page-sub">Subscription alternative addresses</div></div>
-          <button class="btn btn-gold" onclick="showAddAddrMo()">+ Add</button>
+          <div><div class="page-title">Clean IP</div><div class="page-sub">Alternative subscription addresses</div></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" onclick="pingAllAddrs()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              Ping All
+            </button>
+            <button class="btn btn-gold" onclick="showAddAddrMo()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add
+            </button>
+          </div>
         </div>
         <div class="page-rule"></div>
       </div>
       <div class="card">
-        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Default: www.speedtest.net</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border3)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
+          Default fallback: <span style="font-family:var(--mono);color:var(--cyan)">www.speedtest.net</span>
+        </div>
         <div id="addr-list"></div>
       </div>
     </section>
 
-    <!-- Domains -->
+    <!-- ══ Domains ══ -->
     <section class="page" id="page-domains">
       <div class="page-header">
-        <div class="page-eyebrow">Config Domains</div>
+        <div class="page-eyebrow">Config</div>
         <div class="page-header-row">
-          <div><div class="page-title">Domains</div><div class="page-sub">Extra domains for config generation</div></div>
-          <button class="btn btn-gold" onclick="showAddDomainMo()">+ Add Domain</button>
+          <div><div class="page-title">Domains</div><div class="page-sub">Extra domains — one config per domain generated</div></div>
+          <button class="btn btn-gold" onclick="showAddDomainMo()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Domain
+          </button>
         </div>
         <div class="page-rule"></div>
       </div>
       <div class="card">
-        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">دامنه اصلی: <span id="primary-domain" style="font-family:monospace"></span></div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border3)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/></svg>
+          Primary domain: <span id="primary-domain" style="font-family:var(--mono);color:var(--cyan)">–</span>
+        </div>
         <div id="domain-list"></div>
       </div>
     </section>
 
-    <!-- Groups -->
+    <!-- ══ Groups ══ -->
     <section class="page" id="page-groups">
       <div class="page-header">
         <div class="page-eyebrow">Shared Quotas</div>
         <div class="page-header-row">
-          <div><div class="page-title">Groups</div><div class="page-sub">Shared data quota across multiple links</div></div>
-          <button class="btn btn-gold" onclick="showAddGroupMo()">+ New Group</button>
+          <div><div class="page-title">Groups</div><div class="page-sub">Shared data quota across multiple inbounds</div></div>
+          <button class="btn btn-gold" onclick="showAddGroupMo()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Group
+          </button>
         </div>
         <div class="page-rule"></div>
       </div>
       <div id="group-list"></div>
     </section>
 
-    <!-- Security -->
+    <!-- ══ Security ══ -->
     <section class="page" id="page-security">
       <div class="page-header">
-        <div class="page-eyebrow">Access</div>
-        <div class="page-header-row"><div><div class="page-title">Security</div><div class="page-sub">Change panel password</div></div></div>
+        <div class="page-eyebrow">Access Control</div>
+        <div class="page-header-row"><div><div class="page-title">Security</div><div class="page-sub">Panel credentials & backup</div></div></div>
         <div class="page-rule"></div>
       </div>
-      <div class="card" style="max-width:380px">
-        <div class="fg"><label class="fl">Current Password</label><input class="fi" type="password" id="cpw" placeholder="Current password"></div>
-        <div class="fg"><label class="fl">New Password</label><input class="fi" type="password" id="npw" placeholder="Min 4 chars"></div>
-        <button class="btn btn-gold" onclick="chgPw()" style="margin-top:10px;width:100%;justify-content:center;">Update Password</button>
-      </div>
-      <div class="card" style="max-width:380px">
-        <div class="card-hd"><div class="card-title">Backup &amp; Restore</div></div>
-        <div style="font-size:11.5px;color:var(--text3);margin-bottom:12px">Inbound data is stored on disk, but exporting a backup protects you against accidental loss.</div>
-        <button class="btn btn-ghost" onclick="downloadBackup()" style="width:100%;justify-content:center;margin-bottom:8px;">⬇ Export Backup</button>
-        <input type="file" id="restore-file" accept="application/json" style="display:none" onchange="restoreBackup(this.files[0])">
-        <button class="btn btn-ghost" onclick="document.getElementById('restore-file').click()" style="width:100%;justify-content:center;">⬆ Restore From File</button>
+      <div class="grid-2" style="align-items:start">
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Change Password
+            </div>
+          </div>
+          <div class="fg"><label class="fl">Current Password</label><input class="fi" type="password" id="cpw" placeholder="••••••••"></div>
+          <div class="fg"><label class="fl">New Password</label><input class="fi" type="password" id="npw" placeholder="Min 4 chars"></div>
+          <button class="btn btn-gold" onclick="chgPw()" style="margin-top:10px;width:100%;justify-content:center;">Update Password</button>
+        </div>
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              Backup & Restore
+            </div>
+          </div>
+          <div style="font-size:11.5px;color:var(--text3);margin-bottom:16px;line-height:1.6">Export a backup to protect your inbound data against accidental loss.</div>
+          <button class="btn btn-ghost" onclick="downloadBackup()" style="width:100%;justify-content:center;margin-bottom:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export Backup
+          </button>
+          <input type="file" id="restore-file" accept="application/json" style="display:none" onchange="restoreBackup(this.files[0])">
+          <button class="btn btn-ghost" onclick="document.getElementById('restore-file').click()" style="width:100%;justify-content:center;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Restore From File
+          </button>
+        </div>
       </div>
     </section>
 
