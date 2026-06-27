@@ -49,6 +49,8 @@ stats = {"total_bytes": 0, "total_requests": 0, "total_errors": 0, "start_time":
 error_logs: deque = deque(maxlen=50)
 hourly_traffic: dict = defaultdict(int)
 daily_traffic: dict = defaultdict(int)
+# Per-link daily traffic: {uid: {"YYYY-MM-DD": bytes}}, kept last 30 days in memory
+link_daily_traffic: dict = defaultdict(lambda: defaultdict(int))
 http_client: httpx.AsyncClient | None = None
 
 LINKS: dict = {}
@@ -1376,6 +1378,23 @@ async def delete_domain(index: int, _=Depends(require_auth)):
     await db_delete_domain(removed)
     return {"ok": True, "domains": list(CUSTOM_DOMAINS)}
 
+@app.get("/api/analytics")
+async def get_analytics(_=Depends(require_auth)):
+    """Per-link daily traffic for the last 30 days (in-memory only)."""
+    today = datetime.now(timezone.utc)
+    days = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(29, -1, -1)]
+    async with LINKS_LOCK:
+        labels = {uid: data["label"] for uid, data in LINKS.items()}
+    result = []
+    for uid, label in sorted(labels.items(), key=lambda x: x[1]):
+        daily = link_daily_traffic.get(uid, {})
+        result.append({
+            "uid": uid,
+            "label": label,
+            "daily": {d: daily.get(d, 0) for d in days},
+        })
+    return {"days": days, "links": result}
+
 @app.get("/api/backup")
 async def export_backup(_=Depends(require_auth)):
     """Full JSON export of inbounds + groups + addresses, downloadable for safekeeping."""
@@ -1917,10 +1936,31 @@ async def check_quota(uid: str, extra_bytes: int) -> bool:
 
 async def add_usage(uid: str, n: int):
     group_to_check: str | None = None
+    link_suspended: dict | None = None
     async with LINKS_LOCK:
         if uid in LINKS:
             LINKS[uid]["used_bytes"] += n
-            group_to_check = LINKS[uid].get("group_id")
+            link = LINKS[uid]
+            group_to_check = link.get("group_id")
+            # Auto-suspend individual link when quota is fully consumed
+            if (not group_to_check and link["active"] and
+                    link["limit_bytes"] > 0 and
+                    link["used_bytes"] >= link["limit_bytes"]):
+                LINKS[uid]["active"] = False
+                link_suspended = dict(LINKS[uid])
+    if link_suspended:
+        await db_save_link(uid, link_suspended)
+        await close_connections_for_link(uid)
+        mask = int(link_suspended.get("notified_quota") or 0)
+        if not (mask & 8):  # bit 3 = 100% notified
+            async with LINKS_LOCK:
+                if uid in LINKS:
+                    LINKS[uid]["notified_quota"] = mask | 8
+                    link_suspended = dict(LINKS[uid])
+            await db_save_link(uid, link_suspended)
+            await telegram_notify(
+                f"🚫 <b>{link_suspended['label']}</b> has used its entire quota and has been suspended."
+            )
     if not group_to_check:
         return
     async with GROUPS_LOCK:
@@ -1972,7 +2012,9 @@ async def ws_to_tcp(websocket, writer, conn_id, link_uid):
                 if conn_id in connections:
                     connections[conn_id]["bytes"] += size
             hourly_traffic[datetime.now(timezone.utc).strftime("%H:00")] += size
-            daily_traffic[datetime.now(timezone.utc).strftime("%Y-%m-%d")] += size
+            _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_traffic[_today] += size
+            link_daily_traffic[link_uid][_today] += size
             await add_usage(link_uid, size)
             try:
                 writer.write(data)
@@ -2007,7 +2049,9 @@ async def tcp_to_ws(websocket, reader, conn_id, link_uid):
                 if conn_id in connections:
                     connections[conn_id]["bytes"] += size
             hourly_traffic[datetime.now(timezone.utc).strftime("%H:00")] += size
-            daily_traffic[datetime.now(timezone.utc).strftime("%Y-%m-%d")] += size
+            _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_traffic[_today] += size
+            link_daily_traffic[link_uid][_today] += size
             await add_usage(link_uid, size)
             try:
                 await websocket.send_bytes((b"\x00\x00" + data) if first else data)
@@ -2076,7 +2120,9 @@ async def websocket_tunnel(websocket: WebSocket, uuid: str):
             if conn_id in connections:
                 connections[conn_id]["bytes"] += size
         hourly_traffic[datetime.now(timezone.utc).strftime("%H:00")] += size
-        daily_traffic[datetime.now(timezone.utc).strftime("%Y-%m-%d")] += size
+        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        daily_traffic[_today] += size
+        link_daily_traffic[uuid][_today] += size
         await add_usage(uuid, size)
 
         reader, writer = await asyncio.wait_for(
@@ -2090,7 +2136,9 @@ async def websocket_tunnel(websocket: WebSocket, uuid: str):
                 if conn_id in connections:
                     connections[conn_id]["bytes"] += p_size
             hourly_traffic[datetime.now(timezone.utc).strftime("%H:00")] += p_size
-            daily_traffic[datetime.now(timezone.utc).strftime("%Y-%m-%d")] += p_size
+            _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_traffic[_today] += p_size
+            link_daily_traffic[uuid][_today] += p_size
             await add_usage(uuid, p_size)
             try:
                 writer.write(initial_payload)
@@ -2521,13 +2569,31 @@ body{font-family:'Inter',sans-serif;color:var(--text);display:flex;flex-directio
     <section class="page" id="page-traffic">
       <div class="page-header">
         <div class="page-eyebrow">Usage</div>
-        <div class="page-header-row"><div><div class="page-title">Traffic</div><div class="page-sub">Statistics</div></div></div>
+        <div class="page-header-row"><div><div class="page-title">Traffic</div><div class="page-sub">Daily usage per inbound — last 30 days</div></div>
+          <div style="display:flex;gap:6px">
+            <select class="fs" id="analytics-filter" onchange="renderAnalytics()" style="font-size:11px;padding:7px 10px;border-radius:2px;min-width:160px">
+              <option value="all">All inbounds</option>
+            </select>
+          </div>
+        </div>
         <div class="page-rule"></div>
       </div>
       <div class="card">
         <div class="sl-item"><span class="sl-k">Total Traffic</span><span class="sl-v" id="t-tr">–</span></div>
         <div class="sl-item"><span class="sl-k">Total Requests</span><span class="sl-v" id="t-rq">–</span></div>
         <div class="sl-item"><span class="sl-k">Uptime</span><span class="sl-v" id="t-up">–</span></div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><div class="card-title">Daily Usage (MB)</div><span id="analytics-total" style="font-size:12px;color:var(--text3)"></span></div>
+        <div style="height:240px"><canvas id="analytics-chart"></canvas></div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="tbl-wrap" style="border:none">
+          <table class="tbl">
+            <thead><tr><th>Inbound</th><th>Today</th><th>7 Days</th><th>30 Days</th><th>Total Used</th></tr></thead>
+            <tbody id="analytics-tb"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -2732,6 +2798,7 @@ let isAuthenticated=false;
 // ── Theme ────────────────────────────────────────────────────────────────────
 function setTheme(t){
   theme=t;
+  document.documentElement.style.setProperty('--theme-transition','background .3s,color .3s,border-color .3s');
   if(t==='light')document.body.classList.add('light-mode');
   else document.body.classList.remove('light-mode');
   localStorage.setItem('theme',t);
@@ -2741,6 +2808,8 @@ function setTheme(t){
   if(mb)mb.innerHTML=icon;
   if(db)db.innerHTML=icon+' Theme';
   updChartColors();
+  // re-render analytics chart with new theme colors
+  if(analyticsData) renderAnalytics();
 }
 function toggleTheme(){setTheme(theme==='dark'?'light':'dark');}
 
@@ -2773,6 +2842,7 @@ function showDashboard(){
   loadAddrs();
   loadGroups();
   loadDomains();
+  loadAnalytics();
 }
 
 async function doLogin(){
@@ -2808,6 +2878,7 @@ function switchPage(id){
   const target=$m('page-'+id);
   if(target)target.classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===id));
+  if(id==='traffic') loadAnalytics();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -3272,6 +3343,90 @@ async function chgPw(){
 }
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+let analyticsData = null;
+let analyticsChart = null;
+
+async function loadAnalytics(){
+  try{
+    const r = await fetch('/api/analytics');
+    if(!r.ok) return;
+    analyticsData = await r.json();
+    // populate filter dropdown
+    const sel = $m('analytics-filter');
+    if(sel){
+      const cur = sel.value;
+      sel.innerHTML = '<option value="all">All inbounds</option>' +
+        (analyticsData.links||[]).map(l=>`<option value="${esc(l.uid)}">${esc(l.label)}</option>`).join('');
+      if([...sel.options].some(o=>o.value===cur)) sel.value=cur;
+    }
+    renderAnalytics();
+  }catch(e){}
+}
+
+function renderAnalytics(){
+  if(!analyticsData) return;
+  const sel = $m('analytics-filter');
+  const filter = sel ? sel.value : 'all';
+  const days = analyticsData.days || [];
+  const links = analyticsData.links || [];
+  const filtered = filter==='all' ? links : links.filter(l=>l.uid===filter);
+
+  // aggregate daily totals
+  const totals = days.map(d => filtered.reduce((s,l)=>s+(l.daily[d]||0),0));
+  const totalMB = (totals.reduce((a,b)=>a+b,0)/1048576).toFixed(1);
+  const el = $m('analytics-total');
+  if(el) el.textContent = totalMB + ' MB total (30 days)';
+
+  // chart
+  const ctx = $m('analytics-chart');
+  if(ctx){
+    const labels = days.map(d=>d.slice(5)); // MM-DD
+    const dataMB = totals.map(b=>+(b/1048576).toFixed(2));
+    const isDark = theme !== 'light';
+    const barFill = isDark ? 'rgba(250,248,244,0.5)' : 'rgba(20,18,15,0.55)';
+    const barLine = isDark ? '#FAF8F4' : '#16140F';
+    const tickCol = isDark ? 'rgba(250,248,244,0.35)' : 'rgba(20,18,15,0.45)';
+    const gridCol = isDark ? 'rgba(250,248,244,0.06)' : 'rgba(20,18,15,0.08)';
+    if(analyticsChart){ analyticsChart.destroy(); analyticsChart=null; }
+    analyticsChart = new Chart(ctx,{
+      type:'bar',
+      data:{labels,datasets:[{label:'MB',data:dataMB,backgroundColor:barFill,borderColor:barLine,borderWidth:1,borderRadius:1}]},
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:v=>v.parsed.y+' MB'}}},
+        scales:{
+          x:{grid:{display:false},ticks:{color:tickCol,font:{size:9},maxRotation:45}},
+          y:{grid:{color:gridCol},ticks:{color:tickCol,font:{size:9},callback:v=>v+' MB'},beginAtZero:true}
+        }
+      }
+    });
+  }
+
+  // table
+  const tb = $m('analytics-tb');
+  if(!tb) return;
+  const today = days[days.length-1];
+  const last7 = days.slice(-7);
+  const rows = filtered.map(l=>{
+    const todayMB = (( l.daily[today]||0)/1048576).toFixed(2);
+    const w7 = last7.reduce((s,d)=>s+(l.daily[d]||0),0);
+    const w7MB = (w7/1048576).toFixed(2);
+    const m30 = days.reduce((s,d)=>s+(l.daily[d]||0),0);
+    const m30MB = (m30/1048576).toFixed(2);
+    const totalMB2 = fmtB(allLinks.find(x=>x.uuid===l.uid)?.used_bytes||0);
+    return `<tr>
+      <td style="font-weight:600">${esc(l.label)}</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px">${todayMB} MB</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px">${w7MB} MB</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px">${m30MB} MB</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px">${totalMB2}</td>
+    </tr>`;
+  });
+  tb.innerHTML = rows.join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:24px">No traffic data yet</td></tr>';
+}
+
 function initChart(){
   const ctx=$m('tc');
   if(!ctx||tChart)return;
@@ -3555,7 +3710,7 @@ checkAuth();
 let statsInterval=null;
 function startPolling(){
   if(statsInterval)clearInterval(statsInterval);
-  statsInterval=setInterval(()=>{if(isAuthenticated){loadStats();loadLinks();loadGroups();loadDomains();}},12000);
+  statsInterval=setInterval(()=>{if(isAuthenticated){loadStats();loadLinks();loadGroups();loadDomains();loadAnalytics();}},12000);
 }
 startPolling();
 </script>
